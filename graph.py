@@ -2,114 +2,110 @@ import pandas as pd
 import ast
 import math
 import heapq
+from node import Node
 
-class Node:
-    def __init__(self, id, cvegeo, name_loc, lat, lon, neighbors):
-        self.id = id
-        self.cvegeo = cvegeo
-        self.name_loc = name_loc
-        self.lat = lat
-        self.lon = lon
-        self.neighbors = neighbors
-        
 class Grafo:
     def __init__(self):
-        # Almacena los nodos por ID
         self.nodos = {}
 
     def cargar_datos(self, archivo):
-        """Carga los nodos desde un archivo Excel."""
-        try:
-            df = pd.read_excel(archivo)
-            for _, fila in df.iterrows():
-                # Convertir string de lista a lista real
-                try:
-                    vecinos = ast.literal_eval(str(fila['VECINOS']))
-                except (ValueError, SyntaxError):
-                    vecinos = []
-                
-                nodo = Node(
-                    id=fila['ID'],
-                    cvegeo=fila['CVEGEO'],
-                    name_loc=fila['NOM_LOC'],
-                    lat=fila['LAT_DECIMAL'],
-                    lon=fila['LON_DECIMAL'],
-                    neighbors=vecinos
-                )
-                self.nodos[nodo.id] = nodo
-            print(f"Cargados {len(self.nodos)} nodos exitosamente.")
-        except Exception as e:
-            print(f"Error al cargar datos: {e}")
+        print(f"Leyendo archivo: {archivo}")
+        df = pd.read_excel(archivo)
+        
+        for index, fila in df.iterrows():
+            # Convertimos el texto de vecinos a una lista real
+            texto_vecinos = str(fila['VECINOS'])
+            # ast.literal_eval convierte "[1, 2, 3]" en una lista [1, 2, 3]
+            lista_vecinos = ast.literal_eval(texto_vecinos)
+            
+            nuevo_nodo = Node(
+                id=fila['ID'],
+                cvegeo=fila['CVEGEO'],
+                name_loc=fila['NOM_LOC'],
+                lat=fila['LAT_DECIMAL'],
+                lon=fila['LON_DECIMAL'],
+                neighbors=lista_vecinos
+            )
+            self.nodos[nuevo_nodo.id] = nuevo_nodo
+        
+        print(f"Listo! Se cargaron {len(self.nodos)} nodos")
 
-    def calcular_distancia(self, nodo1, nodo2):
-        """Calcula la distancia Haversine entre dos nodos (km)."""
-        radio_tierra = 6371  # km
+    def calcular_distancia(self, nodo_a, nodo_b):
+        """Calcula km entre dos nodos con Haversine"""
+        radio_tierra = 6371  # Radio de la Tierra en km
         
-        d_lat = math.radians(nodo2.lat - nodo1.lat)
-        d_lon = math.radians(nodo2.lon - nodo1.lon)
+        # Convertimos grados a radianes
+        d_lat = math.radians(nodo_b.lat - nodo_a.lat)
+        d_lon = math.radians(nodo_b.lon - nodo_a.lon)
         
+        # Fórmula matemática para distancia en una esfera
         a = (math.sin(d_lat / 2) ** 2 +
-             math.cos(math.radians(nodo1.lat)) * 
-             math.cos(math.radians(nodo2.lat)) * 
+             math.cos(math.radians(nodo_a.lat)) * 
+             math.cos(math.radians(nodo_b.lat)) * 
              math.sin(d_lon / 2) ** 2)
              
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        return radio_tierra * c
+        distancia = radio_tierra * c
+        
+        return distancia
 
-    def obtener_ruta_mas_corta(self, inicio_id, fin_id):
-        """Busca la ruta más corta usando el algoritmo A*."""
+    def buscar_ruta(self, inicio_id, fin_id):
+        """Encuentra el camino más corto usando el algoritmo A*"""
+        # Paso 1: Verificar que los nodos existan
         if inicio_id not in self.nodos or fin_id not in self.nodos:
-            return None, float('inf')
+            print("Error: Uno de los nodos no existe.")
+            return None, 0
 
-        # Cola de prioridad para nodos a visitar: (costo_estimado_total, nodo_id)
-        cola_prioridad = [(0, inicio_id)]
+        # Paso 2: Preparar las estructuras de datos
+        nodo_meta = self.nodos[fin_id]
         
-        # Para reconstruir el camino: de dónde venimos
+        cola = [] # Cola de prioridad: guarda nodos por visitar
+        # Se ordenan automáticamente por el costo estimado (primero el menor)
+        heapq.heappush(cola, (0, inicio_id))
+        
         vino_de = {}
+        costo_g = {}      # Costo real desde el inicio hasta aquí
         
-        # Costo real desde el inicio hasta el nodo actual
-        costo_g = {id: float('inf') for id in self.nodos}
         costo_g[inicio_id] = 0
         
-        # Costo total estimado (g + heurística)
-        costo_f = {id: float('inf') for id in self.nodos}
-        costo_f[inicio_id] = self.calcular_distancia(self.nodos[inicio_id], self.nodos[fin_id])
-        
-        visitados = set()
-
-        while cola_prioridad:
-            _, actual_id = heapq.heappop(cola_prioridad)
+        # Paso 3: Bucle principal de búsqueda
+        while len(cola) > 0:
+            # Sacamos el nodo con menor costo estimado
+            costo_estimado, actual_id = heapq.heappop(cola)
             
+            # Si llegamos al destino, terminamos y devolvemos el camino
             if actual_id == fin_id:
-                return self._reconstruir_camino(vino_de, actual_id), costo_g[fin_id]
-            
-            if actual_id in visitados:
-                continue
-            visitados.add(actual_id)
+                return self.reconstruir_camino(vino_de, actual_id), costo_g[fin_id]
             
             nodo_actual = self.nodos[actual_id]
             
+            # Revisamos todos los vecinos de este nodo
             for vecino_id in nodo_actual.neighbors:
                 if vecino_id not in self.nodos:
                     continue
-                    
-                nodo_vecino = self.nodos[vecino_id]
-                distancia = self.calcular_distancia(nodo_actual, nodo_vecino)
-                nuevo_costo_g = costo_g[actual_id] + distancia
                 
-                if nuevo_costo_g < costo_g[vecino_id]:
+                nodo_vecino = self.nodos[vecino_id]
+                
+                # Calculamos el costo para llegar a este vecino
+                distancia_tramo = self.calcular_distancia(nodo_actual, nodo_vecino)
+                nuevo_costo = costo_g[actual_id] + distancia_tramo
+                
+                # Si encontramos un camino mejor (o es la primera vez que lo vemos)
+                if vecino_id not in costo_g or nuevo_costo < costo_g[vecino_id]:
+                    costo_g[vecino_id] = nuevo_costo
                     vino_de[vecino_id] = actual_id
-                    costo_g[vecino_id] = nuevo_costo_g
-                    heuristica = self.calcular_distancia(nodo_vecino, self.nodos[fin_id])
-                    costo_f[vecino_id] = nuevo_costo_g + heuristica
-                    heapq.heappush(cola_prioridad, (costo_f[vecino_id], vecino_id))
                     
-        return None, float('inf')
+                    # Prioridad = Costo real + Distancia estimada a la meta (Heurística)
+                    prioridad = nuevo_costo + self.calcular_distancia(nodo_vecino, nodo_meta)
+                    heapq.heappush(cola, (prioridad, vecino_id))
+                    
+        return None, 0
 
-    def _reconstruir_camino(self, vino_de, actual_id):
-        """Reconstruye el camino desde el final hasta el inicio."""
+    def reconstruir_camino(self, vino_de, actual_id):
+        """Construye la lista final de nodos siguiendo las pistas hacia atrás"""
         camino = [actual_id]
         while actual_id in vino_de:
             actual_id = vino_de[actual_id]
             camino.append(actual_id)
-        return camino[::-1] # Invierte la lista para tener inicio -> fin
+        # Se invierte la lista para tener el orden correcto: Inicio -> Fin
+        return camino[::-1]
